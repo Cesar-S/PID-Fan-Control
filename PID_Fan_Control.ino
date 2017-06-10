@@ -5,7 +5,7 @@ contain a floating a ping pong ball. The control algorithm is supposed to
 maintain the ball at a set height from the bottom of the tube.
 - Distance measurement is with a SR-04 ultrasonic sensor located at the open end of 
   the tube.
-- The fan is controlled with a PWM signal fed into a L293N morot controller with built
+- The fan is controlled with a PWM signal fed into a L293D motor controller with built
   in diode protection. 
 - A 2 line LCD display module and a rotary encoder are used to change the PID constants 
   while tuning the loop. The LCD is conencteed with a Shift Register one-wire backpack;
@@ -17,7 +17,7 @@ maintain the ball at a set height from the bottom of the tube.
   make the graph legible.
 
 The sketch accompanies the blog article at 
-https://arduinoplusplus.wordpress.com
+https://arduinoplusplus.wordpress.com/2017/06/10/pid-control-experiment-making-the-testing-rig/
 
 Copyright (c) Marco Colli 2017. This is free software; you can redistribute it and/or
 modify it under the terms of the GNU Lesser General Public License as published by 
