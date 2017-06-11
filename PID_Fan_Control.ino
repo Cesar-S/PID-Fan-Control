@@ -35,6 +35,9 @@ External library dependencies:
 - MD_REncoder      https://github.com/MajicDesigns/MD_REncoder
 - MD_KeySwitch     https://github.com/MajicDesigns/MD_KeySwitch
 - MD_Menu          https://github.com/MajicDesigns/MD_Menu
+
+External Applications
+- PLX DAQ Excel logging http://forum.arduino.cc/index.php?topic=437398.msg3013761#msg3013761
 */
 
 #include <EEPROM.h>
@@ -68,7 +71,7 @@ const uint8_t CTL_PIN = 4;
 // SR-04 ultrasonic distance sensor definitions ---------------------
 const uint8_t PIN_TRIG = 12; // Echo sensor trigger pin
 const uint8_t PIN_ECHO = 11; // Echo sensor return pin
-const uint16_t DISTANCE_SAMPLE_PERIOD = 50; // in milliseconds
+const uint16_t SAMPLING_PERIOD = 50; // in milliseconds
 
 // EEPROM base address for config data ------------------------------
 const uint16_t EEPROM_ADDRESS = 0;
@@ -79,8 +82,8 @@ const uint8_t PWM_BASE_VALUE = (255 - PWM_CONTROL_RANGE);
 
 // Physical constants for the apparatus -----------------------------
 const float BALL_DIAMETER = 4.0; // in cm
-const float SENSOR_MAX = 33.0;   // in cm
-const float SENSOR_ZERO = (SENSOR_MAX - BALL_DIAMETER);
+const float TUBE_LENGTH = 33.0;   // in cm
+const float SENSOR_ZERO = (TUBE_LENGTH - BALL_DIAMETER);
 
 // PID Parameters ---------------------------------------------------
 // Define Tuning and and Set Point in a structure we can load and 
@@ -88,64 +91,80 @@ const float SENSOR_ZERO = (SENSOR_MAX - BALL_DIAMETER);
 struct PIDCfg_t
 {
   uint8_t sig[3];
-  double kP, kI, kD;     // PID constants
-  double SetP;    // Set point
+  double Kp, Ti, Td; // PID constants
+  double SetP;       // Set point
 } PIDCfg;
 
 // Menu definitions for 2 line LCD module ---------------------------
-const uint16_t MENU_TIMEOUT = 5000; // in milliseconds
+const uint16_t MENU_TIMEOUT = 10000; // in milliseconds
+const bool MENU_AUTOSTART = false;   // autostart or not
+const uint8_t SP_MAX = (uint8_t)(TUBE_LENGTH - BALL_DIAMETER); // setpoint max value
+const uint8_t SP_MIN = (uint8_t)BALL_DIAMETER; // setpoint min value
 
 // Menu function prototypes
 bool display(MD_Menu::userDisplayAction_t, char*);
 MD_Menu::userNavAction_t navigation(uint16_t &incDelta);
 void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet);
 void *mnuSave(MD_Menu::mnuId_t id, bool bGet);
-void *mnuKPrint(MD_Menu::mnuId_t id, bool bGet);
+void *mnuPrint(MD_Menu::mnuId_t id, bool bGet);
 
 // Menu Headers --------
 const PROGMEM MD_Menu::mnuHeader_t mnuHdr[] =
 {
-  { 10, "Menu",   10, 14, 0 },
-  { 20, "Edit K", 20, 22, 0 },
+  { 10, "Menu",   10, 15, 0 },
+  { 20, "Edit Param", 20, 22, 0 },
 };
 
 // Menu Items ----------
 const PROGMEM MD_Menu::mnuItem_t mnuItm[] =
 {
-  { 10, "Change SP",   MD_Menu::MNU_INPUT, 10 },
-  { 11, "Log Output",  MD_Menu::MNU_INPUT, 30 },
-  { 12, "Edit K",      MD_Menu::MNU_MENU, 20 },
-  { 13, "Print K",     MD_Menu::MNU_INPUT, 20 },
-  { 14, "Save Config", MD_Menu::MNU_INPUT, 13 },
+  { 10, "Step chg SP", MD_Menu::MNU_INPUT, 10 },
+  { 11, "Edit Param",  MD_Menu::MNU_MENU, 20 },
+  { 12, "Log Data",    MD_Menu::MNU_INPUT, 30 },
+  { 13, "Enable CO",   MD_Menu::MNU_INPUT, 31 },
+  { 14, "Print Param", MD_Menu::MNU_INPUT, 20 },
+  { 15, "Save Config", MD_Menu::MNU_INPUT, 13 },
 
-  { 20, "Edit kP", MD_Menu::MNU_INPUT, 40 },
-  { 21, "Edit kI", MD_Menu::MNU_INPUT, 41 },  
-  { 22, "Edit kD", MD_Menu::MNU_INPUT, 42 },  
+  { 20, "Edit Kp", MD_Menu::MNU_INPUT, 40 },
+  { 21, "Edit Ti", MD_Menu::MNU_INPUT, 41 },  
+  { 22, "Edit Td", MD_Menu::MNU_INPUT, 42 },  
 };
 
 // Input Items ---------
+enum logType_t 
+{ 
+  LOG_NONE = 0,
+  LOG_SERIAL_MONITOR = 1,    // Arduino IDE serial monitor
+  LOG_SERIAL_PLOTTER = 2,    // Arduino IDE srial plotter
+  LOG_PLX_DAQ = 3,           // PLX-DAQ Excel real-time logger 
+};
+const PROGMEM char listLogs[] = { "None|Ser Mon|Ser Plot|PLX DAQ" };
+
 const PROGMEM MD_Menu::mnuInput_t mnuInp[] =
 {
-  { 10, "SetPoint", MD_Menu::INP_INT8, mnuValueRqst, 2, 4, 28, 10, nullptr },
+  { 10, "SetPoint", MD_Menu::INP_INT8, mnuValueRqst, 2, SP_MIN, SP_MAX, 10, nullptr },
   { 13, "Confirm",  MD_Menu::INP_RUN, mnuSave, 0, 0, 0, 0, nullptr },
 
-  { 20, "Print", MD_Menu::INP_RUN, mnuKPrint, 0, 0, 0, 0, nullptr },
+  { 20, "Print", MD_Menu::INP_RUN, mnuPrint, 0, 0, 0, 0, nullptr },
 
-  { 30, "Log", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
+  { 30, "Type", MD_Menu::INP_LIST, mnuValueRqst, 8, 0, 0, 0, listLogs },
 
-  { 40, "kP", MD_Menu::INP_FLOAT, mnuValueRqst, 5, 0, 1000, 1, nullptr },
-  { 41, "kI", MD_Menu::INP_FLOAT, mnuValueRqst, 5, 0, 1000, 1, nullptr },
-  { 42, "kD", MD_Menu::INP_FLOAT, mnuValueRqst, 5, 0, 1000, 1, nullptr },
+  { 31, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
+
+  { 40, "Kp", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
+  { 41, "Ti", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
+  { 42, "Td", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
 };
 
 // Global variables -------------------------------------------------
 // PID variables and constants
 double CV, CO;          // Current Value, Current Output
-bool enableLog = false; // log to the Serial Monitor for data collection
-uint32_t timeLogStart;  // data log time stamp
+logType_t logType = LOG_NONE; // logging output
+bool enableOutput = true; // enable the output of the PID control
+uint32_t logCount;      // data log time stamp
 
 // Global Objects ---------------------------------------------------
-PID myPID(&CV, &CO, &PIDCfg.SetP, PIDCfg.kP, PIDCfg.kI, PIDCfg.kD, DIRECT);
+PID myPID(&CV, &CO, &PIDCfg.SetP, PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td, DIRECT);
 
 NewPing sonar(PIN_TRIG, PIN_ECHO, 100);
 
@@ -162,68 +181,75 @@ MD_KeySwitch swCtl(CTL_PIN);
 void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
 // Value request callback for variables
 {
-  static uint8_t setP;
-  static uint32_t f;
+  static uint8_t iTemp;
+  static uint32_t fTemp;
 
   switch (id)
   {
   case 10:
     if (bGet)
     {
-      setP = PIDCfg.SetP;
-      return((void *)&setP);
+      iTemp = PIDCfg.SetP;
+      return((void *)&iTemp);
     }
     else
-      PIDCfg.SetP = setP;
+      PIDCfg.SetP = iTemp;
     break;
 
   case 30:
-    if (bGet) 
-      return((void *)&enableLog);
-    else if (enableLog)
-      {
-        mnuKPrint(0, false);
+    if (bGet)
+    {
+      iTemp = (uint8_t)logType;
+      return((void *)&iTemp);
+    }
+    else
+    {
+      logType = (logType_t)iTemp;
+      if (logType != LOG_NONE)
         logHeader();
-        timeLogStart = millis();
-      }
+    }
+    break;
+
+  case 31:
+    if (bGet) return((void *)&enableOutput);
     break;
 
   case 40:
     if (bGet)
     {
-      f = (uint32_t)(PIDCfg.kP * 100.0);
-      return((void *)&f);
+      fTemp = (uint32_t)(PIDCfg.Kp * 100.0);
+      return((void *)&fTemp);
     }
     else
     {
-      PIDCfg.kP = (float)f / 100.0;
-      myPID.SetTunings(PIDCfg.kP, PIDCfg.kI, PIDCfg.kD);
+      PIDCfg.Kp = (float)fTemp / 100.0;
+      myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
     }
     break;
 
   case 41:
     if (bGet)
     {
-      f = (uint32_t)(PIDCfg.kI * 100.0);
-      return((void *)&f);
+      fTemp = (uint32_t)(PIDCfg.Ti * 100.0);
+      return((void *)&fTemp);
     }
     else
     {
-      PIDCfg.kI = (float)f / 100.0;
-      myPID.SetTunings(PIDCfg.kP, PIDCfg.kI, PIDCfg.kD);
+      PIDCfg.Ti = (float)fTemp / 100.0;
+      myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
     }
     break;
 
   case 42:
     if (bGet)
     {
-      f = (uint32_t)(PIDCfg.kD * 100.0);
-      return((void *)&f);
+      fTemp = (uint32_t)(PIDCfg.Td * 100.0);
+      return((void *)&fTemp);
     }
     else
     {
-      PIDCfg.kD = (float)f / 100.0;
-      myPID.SetTunings(PIDCfg.kP, PIDCfg.kI, PIDCfg.kD);
+      PIDCfg.Td = (float)fTemp / 100.0;
+      myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
     }
     break;
   }
@@ -237,15 +263,15 @@ void *mnuSave(MD_Menu::mnuId_t id, bool bGet)
   paramSave();
 }
 
-void *mnuKPrint(MD_Menu::mnuId_t id, bool bGet)
+void *mnuPrint(MD_Menu::mnuId_t id, bool bGet)
 // Value request callback for run code input
 {
   Serial.print(F("\nPID Kp="));
-  Serial.print(PIDCfg.kP);
-  Serial.print(F(" Ki="));
-  Serial.print(PIDCfg.kI);
-  Serial.print(F(" Kd="));
-  Serial.print(PIDCfg.kD);
+  Serial.print(PIDCfg.Kp);
+  Serial.print(F(" Ti="));
+  Serial.print(PIDCfg.Ti);
+  Serial.print(F(" Td="));
+  Serial.print(PIDCfg.Td);
   Serial.print(F("\n"));
 
   return(nullptr);
@@ -312,7 +338,7 @@ MD_Menu::userNavAction_t navigation(uint16_t &incDelta)
 
   if (re != DIR_NONE)
   {
-    if (M.isInEdit()) incDelta = 1 << abs(RE.speed() / 10);
+    incDelta = (M.isInEdit() ? (1 << abs(RE.speed() / 10)) : 1);
     return(re == DIR_CCW ? MD_Menu::NAV_DEC : MD_Menu::NAV_INC);
   }
 
@@ -341,9 +367,9 @@ void paramLoad(void)
     PIDCfg.sig[0] = signature[0];
     PIDCfg.sig[1] = signature[1];
     PIDCfg.sig[2] = signature[2];
-    PIDCfg.kP = 0;
-    PIDCfg.kI = 0;
-    PIDCfg.kD = 0;
+    PIDCfg.Kp = 0;
+    PIDCfg.Ti = 0;
+    PIDCfg.Td = 0;
     PIDCfg.SetP = 15.0;
   }
 };
@@ -356,20 +382,56 @@ void paramSave(void)
 // Data logging functions -------------------------------------------
 void logHeader(void)
 {
-  Serial.println(F("Time\tSP\tCV\tCO"));
+  if (logType == LOG_SERIAL_MONITOR || logType == LOG_SERIAL_PLOTTER)
+  {
+    if (logType == LOG_SERIAL_MONITOR)
+    {
+      mnuPrint(0, false);
+      Serial.print(F("Time\t"));
+    }
+    Serial.println(F("SP\tCV\tCO"));
+  }
+  else if (logType == LOG_PLX_DAQ)
+  {
+    //Serial.println("CLEARDATA"); // clears sheet starting at row 2
+    Serial.println("CLEARSHEET"); // clears sheet starting at row 1
+
+    // define colum headings
+    Serial.println("LABEL,Date,Time,DeltaT,SP,CV,CO");
+    Serial.println("BEEP");
+  }
+  logCount = 0;
 }
 
 void logData(void)
 // log data if enabled
 // SP, CV, CO
 {
-  Serial.print(millis() - timeLogStart);
-  Serial.print(F("\t"));
-  Serial.print((int8_t)PIDCfg.SetP);
-  Serial.print(F("\t"));
-  Serial.print((int8_t)CV);
-  Serial.print(F("\t"));
-  Serial.println(CO);
+  if (logType == LOG_SERIAL_MONITOR || logType == LOG_SERIAL_PLOTTER)
+  {
+    if (logType == LOG_SERIAL_MONITOR)
+    {
+      Serial.print(logCount*SAMPLING_PERIOD);
+      Serial.print(F("\t"));
+    }
+    Serial.print((int8_t)PIDCfg.SetP);
+    Serial.print(F("\t"));
+    Serial.print((int8_t)CV);
+    Serial.print(F("\t"));
+    Serial.println(CO);
+  }
+  else if (logType == LOG_PLX_DAQ)
+  {
+    Serial.print("DATA,DATE,TIME,");
+    Serial.print(logCount*SAMPLING_PERIOD);
+    Serial.print(",");
+    Serial.print((int8_t)PIDCfg.SetP);
+    Serial.print(",");
+    Serial.print((int8_t)CV);
+    Serial.print(",");
+    Serial.print(CO);
+    Serial.println(",AUTOSCROLL_20");
+  }
 }
 
 // Standard Setup and loop ------------------------------------------
@@ -379,10 +441,15 @@ void setup(void)
 
   paramLoad();
 
+  // LCD display
+  lcd.begin(LCD_COLS, LCD_ROWS);
+  lcd.clear();
+  lcd.noCursor();
+
   // Menu
   M.begin();
-  M.setMenuWrap(false);
-  M.setAutoStart(true);
+  M.setMenuWrap(true);
+  M.setAutoStart(MENU_AUTOSTART);
   M.setTimeout(MENU_TIMEOUT);
 
   // Rotary Encoder
@@ -390,19 +457,14 @@ void setup(void)
   swCtl.begin();
   swCtl.enableRepeat(false);
 
-  // LCD display
-  lcd.begin(LCD_COLS, LCD_ROWS);
-  lcd.clear();
-  lcd.noCursor();
-
   // PWM output
   pinMode(PIN_E1, OUTPUT);
 
   //turn the PID on
   myPID.SetOutputLimits(0, PWM_CONTROL_RANGE);
   myPID.SetMode(AUTOMATIC);
-  myPID.SetSampleTime(DISTANCE_SAMPLE_PERIOD);
-  myPID.SetTunings(PIDCfg.kP, PIDCfg.kI, PIDCfg.kD);
+  myPID.SetSampleTime(SAMPLING_PERIOD);
+  myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
 }
 
 void loop(void) 
@@ -410,12 +472,25 @@ void loop(void)
   static uint32_t timeLastSensor = 0; // sensor update timer
   static uint32_t timeLastUpdate = 0; // display update timer
 
+  if (!MENU_AUTOSTART && !M.isInMenu())
+  {
+    uint16_t delta;
+    MD_Menu::userNavAction_t m = navigation(delta);
+
+    switch (m)
+    {
+    case MD_Menu::NAV_SEL: M.runMenu(true); break;
+    case MD_Menu::NAV_INC: PIDCfg.SetP = ((PIDCfg.SetP + delta) <= SP_MAX ? (PIDCfg.SetP + delta) : SP_MAX); break;
+    case MD_Menu::NAV_DEC: PIDCfg.SetP = ((PIDCfg.SetP - delta) >= SP_MIN ? (PIDCfg.SetP - delta) : SP_MIN); break;
+    }
+  }
+
   // run the menu
   M.runMenu();
 
   // read the sensor and do the PID
   // Wait between pings. 29ms should be the shortest delay between pings.
-  if (millis() - timeLastSensor >= DISTANCE_SAMPLE_PERIOD)
+  if (millis() - timeLastSensor >= SAMPLING_PERIOD)
   {
     CV = SENSOR_ZERO - sonar.ping_cm();
     timeLastSensor = millis();
@@ -424,9 +499,16 @@ void loop(void)
     myPID.Compute();
 
     // output value
-    analogWrite(PIN_E1, (uint8_t)(CO + PWM_BASE_VALUE));
+    if (enableOutput)
+      analogWrite(PIN_E1, (uint8_t)(CO + PWM_BASE_VALUE));
+    else
+      digitalWrite(PIN_E1, LOW);
 
-    if (enableLog) logData(); // log the data if enabled
+    if (logType != LOG_NONE)
+    {
+      logData(); // log the data if enabled
+      logCount++;
+    }
   }
 
   // Update the display if not running menu, but don't overload 
