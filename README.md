@@ -9,17 +9,15 @@ Sketch to control the PID test/learning rig. The hardware system for this code i
 
 ## Function
 This sketch controls a fan blowing into a vertical acrylic tube designed to 
-contain a floating a ping pong ball. The control algorithm is supposed to 
-maintain the ball at a set height from the bottom of the tube.
-* Distance measurement is with a SR-04 ultrasonic sensor located at the open end of 
-the tube.
-* The fan is controlled with a PWM signal fed into a L293D motor controller with built
-in diode protection. 
+contain a floating ping pong ball. The control algorithm is supposed to 
+levitate the ball at a set height from the bottom of the tube.
+* Distance using a SR-04 ultrasonic sensor located at the open end of the tube.
+* The fan at the other end of the tube is controlled with a PWM signal into a 
+L293D motor controller. 
 * A 2 line LCD display module and a rotary encoder are used to change the PID constants 
-while tuning the loop. The LCD is conencteed with a Shift Register one-wire backpack;
+while tuning the loop. The LCD is connecteed with a Shift Register one-wire backpack;
 other types of LCD will requires changes to the class initialisation parameters
 to suit that hardware type.
-* PID parameters can be saved to EEPROM and are relaoded at startup.
-* Data is logged to the Serial Monitor to allow it to be graphed externally. Arduino IDE
-Serial Plot can also be used, but the timestamp needs to be removed from the data to 
-make the graph legible.
+* PID parameters can be saved to EEPROM and are reloaded at startup.
+* Data can be logged to the Serial Monitor, Serial Plotter or PLX-DAQ for 
+Microsoft Excel, by menu selection.

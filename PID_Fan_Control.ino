@@ -1,23 +1,21 @@
 /* Sketch for experimenting with tuning a PID loop
 
-This sketch controls a fan blowing into a vertical acrylic tube designed to 
-contain a floating a ping pong ball. The control algorithm is supposed to 
-maintain the ball at a set height from the bottom of the tube.
-- Distance measurement is with a SR-04 ultrasonic sensor located at the open end of 
-  the tube.
-- The fan is controlled with a PWM signal fed into a L293D motor controller with built
-  in diode protection. 
-- A 2 line LCD display module and a rotary encoder are used to change the PID constants 
-  while tuning the loop. The LCD is conencteed with a Shift Register one-wire backpack;
-  other types of LCD will requires changes to the class initialisation parameters
-  to suit that hardware type.
-- PID parameters can be saved to EEPROM and are relaoded at startup.
-- Data is logged to the Serial Monitor to allow it to be graphed externally. Arduino IDE
-  Serial Plot can also be used, but the timestamp needs to be removed from the data to 
-  make the graph legible.
-
 The sketch accompanies the blog article at 
 https://arduinoplusplus.wordpress.com/2017/06/10/pid-control-experiment-making-the-testing-rig/
+
+This sketch controls a fan blowing into a vertical acrylic tube designed to 
+contain a floating ping pong ball. The control algorithm is supposed to 
+levitate the ball at a set height from the bottom of the tube.
+* Distance using a SR-04 ultrasonic sensor located at the open end of the tube.
+* The fan at the other end of the tube is controlled with a PWM signal into a 
+L293D motor controller. 
+* A 2 line LCD display module and a rotary encoder are used to change the PID constants 
+while tuning the loop. The LCD is connecteed with a Shift Register one-wire backpack;
+other types of LCD will requires changes to the class initialisation parameters
+to suit that hardware type.
+* PID parameters can be saved to EEPROM and are reloaded at startup.
+* Data can be logged to the Serial Monitor, Serial Plotter or PLX-DAQ for 
+Microsoft Excel, by menu selection.
 
 Copyright (c) Marco Colli 2017. This is free software; you can redistribute it and/or
 modify it under the terms of the GNU Lesser General Public License as published by 
@@ -93,6 +91,8 @@ struct PIDCfg_t
   uint8_t sig[3];
   double Kp, Ti, Td; // PID constants
   double SetP;       // Set point
+  bool enableOutput; // enable the output of the PID control
+  bool runAuto;      // run in Auto mode - PID controls CO
 } PIDCfg;
 
 // Menu definitions for 2 line LCD module ---------------------------
@@ -111,23 +111,24 @@ void *mnuPrint(MD_Menu::mnuId_t id, bool bGet);
 // Menu Headers --------
 const PROGMEM MD_Menu::mnuHeader_t mnuHdr[] =
 {
-  { 10, "Menu",   10, 15, 0 },
+  { 10, "Menu",   10, 16, 0 },
   { 20, "Edit Param", 20, 22, 0 },
 };
 
 // Menu Items ----------
 const PROGMEM MD_Menu::mnuItem_t mnuItm[] =
 {
-  { 10, "Step chg SP", MD_Menu::MNU_INPUT, 10 },
+  { 10, "SP step chg", MD_Menu::MNU_INPUT, 10 },
   { 11, "Edit Param",  MD_Menu::MNU_MENU, 20 },
   { 12, "Log Data",    MD_Menu::MNU_INPUT, 30 },
-  { 13, "Enable CO",   MD_Menu::MNU_INPUT, 31 },
-  { 14, "Print Param", MD_Menu::MNU_INPUT, 20 },
-  { 15, "Save Config", MD_Menu::MNU_INPUT, 13 },
+  { 13, "Enable CO",   MD_Menu::MNU_INPUT, 40 },
+  { 14, "Auto Mode",   MD_Menu::MNU_INPUT, 41 },
+  { 15, "Print Param", MD_Menu::MNU_INPUT, 20 },
+  { 16, "Save Config", MD_Menu::MNU_INPUT, 21 },
 
-  { 20, "Edit Kp", MD_Menu::MNU_INPUT, 40 },
-  { 21, "Edit Ti", MD_Menu::MNU_INPUT, 41 },  
-  { 22, "Edit Td", MD_Menu::MNU_INPUT, 42 },  
+  { 20, "Edit Kp", MD_Menu::MNU_INPUT, 50 },
+  { 21, "Edit Ti", MD_Menu::MNU_INPUT, 51 },  
+  { 22, "Edit Td", MD_Menu::MNU_INPUT, 52 },  
 };
 
 // Input Items ---------
@@ -142,26 +143,28 @@ const PROGMEM char listLogs[] = { "None|Ser Mon|Ser Plot|PLX DAQ" };
 
 const PROGMEM MD_Menu::mnuInput_t mnuInp[] =
 {
-  { 10, "SetPoint", MD_Menu::INP_INT8, mnuValueRqst, 2, SP_MIN, SP_MAX, 10, nullptr },
-  { 13, "Confirm",  MD_Menu::INP_RUN, mnuSave, 0, 0, 0, 0, nullptr },
+  { 10, "SP",      MD_Menu::INP_INT8, mnuValueRqst, 2, SP_MIN, SP_MAX, 10, nullptr },
 
   { 20, "Print", MD_Menu::INP_RUN, mnuPrint, 0, 0, 0, 0, nullptr },
+  { 21, "Confirm", MD_Menu::INP_RUN, mnuSave, 0, 0, 0, 0, nullptr },
 
   { 30, "Type", MD_Menu::INP_LIST, mnuValueRqst, 8, 0, 0, 0, listLogs },
 
-  { 31, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
+  { 40, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
+  { 41, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
 
-  { 40, "Kp", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
-  { 41, "Ti", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
-  { 42, "Td", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
+  { 50, "Kp", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
+  { 51, "Ti", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
+  { 52, "Td", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
 };
 
 // Global variables -------------------------------------------------
 // PID variables and constants
-double CV, CO;          // Current Value, Current Output
+double CV;                          // Current Value - updated from sensor
+double CO = PWM_CONTROL_RANGE - 2;  // Current Output - initialise in case manual mode
+
 logType_t logType = LOG_NONE; // logging output
-bool enableOutput = true; // enable the output of the PID control
-uint32_t logCount;      // data log time stamp
+int32_t logCount;             // data log time stamp
 
 // Global Objects ---------------------------------------------------
 PID myPID(&CV, &CO, &PIDCfg.SetP, PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td, DIRECT);
@@ -186,7 +189,7 @@ void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
 
   switch (id)
   {
-  case 10:
+  case 10: // Step Point
     if (bGet)
     {
       iTemp = PIDCfg.SetP;
@@ -196,7 +199,7 @@ void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
       PIDCfg.SetP = iTemp;
     break;
 
-  case 30:
+  case 30: // log type list selection
     if (bGet)
     {
       iTemp = (uint8_t)logType;
@@ -210,11 +213,18 @@ void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
     }
     break;
 
-  case 31:
-    if (bGet) return((void *)&enableOutput);
+  case 40:  // Enable CO output
+    if (bGet) return((void *)&PIDCfg.enableOutput);
     break;
 
-  case 40:
+  case 41:  // Run auto/manual
+    if (bGet) 
+      return((void *)&PIDCfg.runAuto);
+    else if (PIDCfg.runAuto) 
+      PIDCfg.SetP = (SP_MAX - SP_MIN)/2;  // sensible value
+    break;
+
+  case 50:  // Parameter Kp
     if (bGet)
     {
       fTemp = (uint32_t)(PIDCfg.Kp * 100.0);
@@ -227,7 +237,7 @@ void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
     }
     break;
 
-  case 41:
+  case 51:  // Parameter Ti
     if (bGet)
     {
       fTemp = (uint32_t)(PIDCfg.Ti * 100.0);
@@ -240,7 +250,7 @@ void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
     }
     break;
 
-  case 42:
+  case 52:  // Parameter Td
     if (bGet)
     {
       fTemp = (uint32_t)(PIDCfg.Td * 100.0);
@@ -371,6 +381,8 @@ void paramLoad(void)
     PIDCfg.Ti = 0;
     PIDCfg.Td = 0;
     PIDCfg.SetP = 15.0;
+    PIDCfg.enableOutput = true;
+    PIDCfg.runAuto = true;
   }
 };
 
@@ -480,8 +492,18 @@ void loop(void)
     switch (m)
     {
     case MD_Menu::NAV_SEL: M.runMenu(true); break;
-    case MD_Menu::NAV_INC: PIDCfg.SetP = ((PIDCfg.SetP + delta) <= SP_MAX ? (PIDCfg.SetP + delta) : SP_MAX); break;
-    case MD_Menu::NAV_DEC: PIDCfg.SetP = ((PIDCfg.SetP - delta) >= SP_MIN ? (PIDCfg.SetP - delta) : SP_MIN); break;
+    case MD_Menu::NAV_INC: 
+      if (PIDCfg.runAuto)
+        PIDCfg.SetP = ((PIDCfg.SetP + delta) <= SP_MAX ? (PIDCfg.SetP + delta) : SP_MAX); 
+      else
+        CO = ((CO + delta) <= PWM_CONTROL_RANGE ? (CO + delta) : PWM_CONTROL_RANGE);
+      break;
+    case MD_Menu::NAV_DEC: 
+      if (PIDCfg.runAuto)
+        PIDCfg.SetP = ((PIDCfg.SetP - delta) >= SP_MIN ? (PIDCfg.SetP - delta) : SP_MIN); 
+      else
+        CO = ((CO - delta) >= 0 ? (CO - delta) : 0);
+      break;
     }
   }
 
@@ -496,10 +518,11 @@ void loop(void)
     timeLastSensor = millis();
 
     // do PID calcs and output new control value
-    myPID.Compute();
+    if (PIDCfg.runAuto)
+      myPID.Compute();
 
     // output value
-    if (enableOutput)
+    if (PIDCfg.enableOutput)
       analogWrite(PIN_E1, (uint8_t)(CO + PWM_BASE_VALUE));
     else
       digitalWrite(PIN_E1, LOW);
@@ -521,13 +544,21 @@ void loop(void)
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print(F("SP:"));
-      lcd.print((uint8_t)PIDCfg.SetP);
+      if (PIDCfg.runAuto)
+        lcd.print((uint8_t)PIDCfg.SetP);
+      else
+        lcd.print(F("-"));
       lcd.setCursor(LCD_COLS/2, 0);
       lcd.print(F("CV:"));
       lcd.print((uint8_t)CV);
       lcd.setCursor(0, 1);
       lcd.print(F("CO:"));
-      lcd.print(CO+PWM_BASE_VALUE);
+      if (PIDCfg.enableOutput)
+        lcd.print(CO + PWM_BASE_VALUE);
+      else
+        lcd.print(F("-"));
+      lcd.setCursor(LCD_COLS-4, 1);
+      lcd.print(PIDCfg.runAuto ? F("AUTO") : F("MAN"));
     }
   }
 }
