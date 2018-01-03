@@ -31,7 +31,7 @@ External library dependencies:
 - PID_v1           http://playground.arduino.cc/Code/PIDLibrary
 - LiquidCrystal_SR https://bitbucket.org/fmalpartida/new-liquidcrystal/overview
 - MD_REncoder      https://github.com/MajicDesigns/MD_REncoder
-- MD_KeySwitch     https://github.com/MajicDesigns/MD_KeySwitch
+- MD_UISwitch      https://github.com/MajicDesigns/MD_UISwitch
 - MD_Menu          https://github.com/MajicDesigns/MD_Menu
 
 External Applications
@@ -43,7 +43,7 @@ External Applications
 #include <PID_v1.h>
 #include <LiquidCrystal_SR.h>
 #include <MD_REncoder.h>
-#include <MD_KeySwitch.h>
+#include <MD_UISwitch.h>
 #include <MD_Menu.h>
 
 #define DEBUG_MENU 0    // outputs to the serial monitor to debug menu navigation
@@ -104,9 +104,9 @@ const uint8_t SP_MIN = (uint8_t)BALL_DIAMETER; // setpoint min value
 // Menu function prototypes
 bool display(MD_Menu::userDisplayAction_t, char*);
 MD_Menu::userNavAction_t navigation(uint16_t &incDelta);
-void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet);
-void *mnuSave(MD_Menu::mnuId_t id, bool bGet);
-void *mnuPrint(MD_Menu::mnuId_t id, bool bGet);
+MD_Menu::value_t *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet);
+MD_Menu::value_t *mnuSave(MD_Menu::mnuId_t id, bool bGet);
+MD_Menu::value_t *mnuPrint(MD_Menu::mnuId_t id, bool bGet);
 
 // Menu Headers --------
 const PROGMEM MD_Menu::mnuHeader_t mnuHdr[] =
@@ -143,19 +143,19 @@ const PROGMEM char listLogs[] = { "None|Ser Mon|Ser Plot|PLX DAQ" };
 
 const PROGMEM MD_Menu::mnuInput_t mnuInp[] =
 {
-  { 10, "SP",      MD_Menu::INP_INT8, mnuValueRqst, 2, SP_MIN, SP_MAX, 10, nullptr },
+  { 10, "SP",      MD_Menu::INP_INT8, mnuValueRqst, 2, SP_MIN, 0, SP_MAX, 0, 10, nullptr },
 
-  { 20, "Print", MD_Menu::INP_RUN, mnuPrint, 0, 0, 0, 0, nullptr },
-  { 21, "Confirm", MD_Menu::INP_RUN, mnuSave, 0, 0, 0, 0, nullptr },
+  { 20, "Print", MD_Menu::INP_RUN, mnuPrint, 0, 0, 0, 0, 0, 0, nullptr },
+  { 21, "Confirm", MD_Menu::INP_RUN, mnuSave, 0, 0, 0, 0, 0, 0, nullptr },
 
-  { 30, "Type", MD_Menu::INP_LIST, mnuValueRqst, 8, 0, 0, 0, listLogs },
+  { 30, "Type", MD_Menu::INP_LIST, mnuValueRqst, 8, 0, 0, 0, 0, 0, listLogs },
 
-  { 40, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
-  { 41, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 10, nullptr },
+  { 40, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 0, 0, 10, nullptr },
+  { 41, "Enable", MD_Menu::INP_BOOL, mnuValueRqst, 0, 0, 0, 0, 0, 10, nullptr },
 
-  { 50, "Kp", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
-  { 51, "Ti", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
-  { 52, "Td", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 10000, 1, nullptr },
+  { 50, "Kp", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 0, 10000, 0, 1, nullptr },
+  { 51, "Ti", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 0, 10000, 0, 1, nullptr },
+  { 52, "Td", MD_Menu::INP_FLOAT, mnuValueRqst, 6, 0, 0, 10000, 0, 1, nullptr },
 };
 
 // Global variables -------------------------------------------------
@@ -178,102 +178,95 @@ MD_Menu M(navigation, display,// user navigation and display
 
 LiquidCrystal_SR lcd(LCD_DAT_PIN, LCD_CLK_PIN);
 MD_REncoder  RE(RE_A_PIN, RE_B_PIN);
-MD_KeySwitch swCtl(CTL_PIN);
+MD_UISwitch_Digital swCtl(CTL_PIN);
 
 // Menu callback functions ------------------------------------------
-void *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
+MD_Menu::value_t *mnuValueRqst(MD_Menu::mnuId_t id, bool bGet)
 // Value request callback for variables
 {
-  static uint8_t iTemp;
-  static uint32_t fTemp;
+  static MD_Menu::value_t v;
 
   switch (id)
   {
   case 10: // Step Point
     if (bGet)
-    {
-      iTemp = PIDCfg.SetP;
-      return((void *)&iTemp);
-    }
+      v.value = PIDCfg.SetP;
     else
-      PIDCfg.SetP = iTemp;
+      PIDCfg.SetP = v.value;
     break;
 
   case 30: // log type list selection
     if (bGet)
-    {
-      iTemp = (uint8_t)logType;
-      return((void *)&iTemp);
-    }
+      v.value = logType;
     else
     {
-      logType = (logType_t)iTemp;
+      logType = v.value;
       if (logType != LOG_NONE)
         logHeader();
     }
     break;
 
   case 40:  // Enable CO output
-    if (bGet) return((void *)&PIDCfg.enableOutput);
+    if (bGet)
+      v.value = PIDCfg.enableOutput;
+    else
+      PIDCfg.enableOutput = v.value;
     break;
 
   case 41:  // Run auto/manual
-    if (bGet) 
-      return((void *)&PIDCfg.runAuto);
-    else if (PIDCfg.runAuto) 
-      PIDCfg.SetP = (SP_MAX - SP_MIN)/2;  // sensible value
+    if (bGet)
+      v.value = PIDCfg.runAuto;
+    else
+    {
+      PIDCfg.runAuto = v.value;
+      if (PIDCfg.runAuto)
+        PIDCfg.SetP = (SP_MAX - SP_MIN) / 2;  // sensible value
+    }
     break;
 
   case 50:  // Parameter Kp
     if (bGet)
-    {
-      fTemp = (uint32_t)(PIDCfg.Kp * 100.0);
-      return((void *)&fTemp);
-    }
+      v.value = (uint32_t)(PIDCfg.Kp * 100.0);
     else
     {
-      PIDCfg.Kp = (float)fTemp / 100.0;
+      PIDCfg.Kp = (float)v.value / 100.0;
       myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
     }
     break;
 
   case 51:  // Parameter Ti
     if (bGet)
-    {
-      fTemp = (uint32_t)(PIDCfg.Ti * 100.0);
-      return((void *)&fTemp);
-    }
+      v.value = (uint32_t)(PIDCfg.Ti * 100.0);
     else
     {
-      PIDCfg.Ti = (float)fTemp / 100.0;
+      PIDCfg.Ti = (float)v.value / 100.0;
       myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
     }
     break;
 
   case 52:  // Parameter Td
     if (bGet)
-    {
-      fTemp = (uint32_t)(PIDCfg.Td * 100.0);
-      return((void *)&fTemp);
-    }
+      v.value = (uint32_t)(PIDCfg.Td * 100.0);
     else
     {
-      PIDCfg.Td = (float)fTemp / 100.0;
+      PIDCfg.Td = (float)v.value / 100.0;
       myPID.SetTunings(PIDCfg.Kp, PIDCfg.Ti, PIDCfg.Td);
     }
     break;
   }
 
+    if (bGet) return (&v);
+
   return(nullptr);
 }
 
-void *mnuSave(MD_Menu::mnuId_t id, bool bGet)
+MD_Menu::value_t *mnuSave(MD_Menu::mnuId_t id, bool bGet)
   // Value request callback for run code input
 {
   paramSave();
 }
 
-void *mnuPrint(MD_Menu::mnuId_t id, bool bGet)
+MD_Menu::value_t *mnuPrint(MD_Menu::mnuId_t id, bool bGet)
 // Value request callback for run code input
 {
   Serial.print(F("\nPID Kp="));
@@ -354,8 +347,8 @@ MD_Menu::userNavAction_t navigation(uint16_t &incDelta)
 
   switch (swCtl.read())
   {
-  case MD_KeySwitch::KS_PRESS:     return(MD_Menu::NAV_SEL);
-  case MD_KeySwitch::KS_LONGPRESS: return(MD_Menu::NAV_ESC);
+  case MD_UISwitch::KEY_PRESS:     return(MD_Menu::NAV_SEL);
+  case MD_UISwitch::KEY_LONGPRESS: return(MD_Menu::NAV_ESC);
   }
 
   return(MD_Menu::NAV_NULL);
