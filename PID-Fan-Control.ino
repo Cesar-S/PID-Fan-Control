@@ -10,8 +10,8 @@ levitate the ball at a set height from the bottom of the tube.
 * The fan at the other end of the tube is controlled with a PWM signal into a 
 L293D motor controller. 
 * A 2 line LCD display module and a rotary encoder are used to change the PID constants 
-while tuning the loop. The LCD is connecteed with a Shift Register one-wire backpack;
-other types of LCD will requires changes to the class initialisation parameters
+while tuning the loop. The LCD is connected with a Shift Register one-wire backpack;
+other types of LCD will requires changes to the class initialization parameters
 to suit that hardware type.
 * PID parameters can be saved to EEPROM and are reloaded at startup.
 * Data can be logged to the Serial Monitor, Serial Plotter or PLX-DAQ for 
@@ -143,7 +143,7 @@ const PROGMEM char listLogs[] = { "None|Ser Mon|Ser Plot|PLX DAQ" };
 
 const PROGMEM MD_Menu::mnuInput_t mnuInp[] =
 {
-  { 10, "SP",      MD_Menu::INP_INT8, mnuValueRqst, 2, SP_MIN, 0, SP_MAX, 0, 10, nullptr },
+  { 10, "SP",      MD_Menu::INP_INT, mnuValueRqst, 2, SP_MIN, 0, SP_MAX, 0, 10, nullptr },
 
   { 20, "Print", MD_Menu::INP_RUN, mnuPrint, 0, 0, 0, 0, 0, 0, nullptr },
   { 21, "Confirm", MD_Menu::INP_RUN, mnuSave, 0, 0, 0, 0, 0, 0, nullptr },
